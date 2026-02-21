@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CVEsweep Report — {{ result.scan_start }}</title>
+
+  <!-- Bootstrap 5 -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+        rel="stylesheet"
+        integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+        crossorigin="anonymous">
+  <!-- DataTables -->
+  <link href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css" rel="stylesheet">
+
+  <style>
+    body { background: #0d1117; color: #c9d1d9; }
+    .navbar-brand { font-family: monospace; font-size: 1.3rem; }
+    .card { background: #161b22; border: 1px solid #30363d; }
+    .card-header { background: #21262d; border-bottom: 1px solid #30363d; }
+    table.dataTable thead th { background: #21262d; color: #58a6ff; }
+    table.dataTable tbody tr:hover { background: #1c2128 !important; }
+    .badge-CRITICAL { background-color: #da3633; }
+    .badge-HIGH     { background-color: #e3b341; color: #000; }
+    .badge-MEDIUM   { background-color: #d29922; color: #000; }
+    .badge-LOW      { background-color: #388bfd; }
+    .badge-NONE     { background-color: #238636; }
+    .stat-card { text-align: center; padding: 1.5rem; }
+    .stat-number { font-size: 2.5rem; font-weight: bold; font-family: monospace; }
+    .host-header { font-family: monospace; font-size: 1rem; }
+    .cve-row td { font-size: 0.875rem; }
+    a { color: #58a6ff; }
+    .dataTables_wrapper .dataTables_paginate .paginate_button { color: #c9d1d9 !important; }
+    @media print { body { background: white; color: black; } .card { border: 1px solid #ccc; } }
+  </style>
+</head>
+<body>
+
+<!-- Navbar -->
+<nav class="navbar navbar-dark" style="background: #161b22; border-bottom: 1px solid #30363d;">
+  <div class="container-fluid">
+    <span class="navbar-brand">
+      <span style="color: #f85149;">CVE</span><span style="color: #58a6ff;">sweep</span>
+      <small class="text-muted ms-2">v{{ version }}</small>
+    </span>
+    <span class="text-muted small">{{ result.scan_start }}</span>
+  </div>
+</nav>
+
+<div class="container-fluid py-4">
+
+  <!-- Summary cards -->
+  <div class="row g-3 mb-4">
+    <div class="col-md-3">
+      <div class="card stat-card">
+        <div class="stat-number text-info">{{ result.hosts_up | length }}</div>
+        <div class="text-muted">Hosts Up</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card">
+        <div class="stat-number {% if result.vulnerable_hosts %}text-danger{% else %}text-success{% endif %}">
+          {{ result.vulnerable_hosts | length }}
+        </div>
+        <div class="text-muted">Vulnerable Hosts</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card">
+        <div class="stat-number {% if result.total_cves %}text-danger{% else %}text-success{% endif %}">
+          {{ result.total_cves }}
+        </div>
+        <div class="text-muted">Total CVEs</div>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <div class="card stat-card">
+        <div class="stat-number text-secondary">{{ "%.1f"|format(result.elapsed) }}s</div>
+        <div class="text-muted">Scan Duration</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- All CVEs table -->
+  {% if all_cves_sorted %}
+  <div class="card mb-4">
+    <div class="card-header">
+      <h5 class="mb-0 text-danger">All Vulnerabilities Found</h5>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table id="allCvesTable" class="table table-dark table-hover mb-0 dataTable">
+          <thead>
+            <tr>
+              <th>Host</th>
+              <th>Port</th>
+              <th>Service</th>
+              <th>CVE ID</th>
+              <th>CVSS</th>
+              <th>Severity</th>
+              <th>Published</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for host_ip, port, svc_name, cve in all_cves_sorted %}
+            <tr class="cve-row">
+              <td><code>{{ host_ip }}</code></td>
+              <td>{{ port }}</td>
+              <td>{{ svc_name }}</td>
+              <td>
+                <a href="{{ cve.url }}" target="_blank" rel="noopener">{{ cve.cve_id }}</a>
+              </td>
+              <td>{{ "%.1f"|format(cve.cvss_score) }}</td>
+              <td>
+                <span class="badge badge-{{ cve.severity }}">{{ cve.severity }}</span>
+              </td>
+              <td>{{ cve.published }}</td>
+              <td>{{ cve.description[:120] }}{% if cve.description|length > 120 %}…{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Per-host accordion -->
+  <div class="card mb-4">
+    <div class="card-header">
+      <h5 class="mb-0">Host Details</h5>
+    </div>
+    <div class="card-body p-0">
+      <div class="accordion accordion-flush" id="hostsAccordion">
+        {% for host in result.hosts %}
+        {% set host_id = "host-" ~ loop.index %}
+        <div class="accordion-item" style="background: #161b22; border-color: #30363d;">
+          <h2 class="accordion-header">
+            <button class="accordion-button {% if not host.is_vulnerable %}collapsed{% endif %}"
+                    type="button"
+                    data-bs-toggle="collapse"
+                    data-bs-target="#{{ host_id }}"
+                    style="background: #1c2128; color: #c9d1d9;">
+              <span class="host-header me-3">
+                <span class="{% if host.status == 'up' %}text-success{% else %}text-danger{% endif %}">●</span>
+                {{ host.display_name }}
+              </span>
+              {% if host.os_match %}
+              <small class="text-muted me-3">{{ host.os_match }}</small>
+              {% endif %}
+              {% if host.is_vulnerable %}
+              <span class="badge bg-danger ms-auto">{{ host.total_cves }} CVE{% if host.total_cves != 1 %}s{% endif %}</span>
+              {% else %}
+              <span class="badge bg-success ms-auto">Clean</span>
+              {% endif %}
+            </button>
+          </h2>
+          <div id="{{ host_id }}" class="accordion-collapse collapse {% if host.is_vulnerable %}show{% endif %}">
+            <div class="accordion-body p-0">
+              {% if host.services %}
+              <table class="table table-dark table-sm mb-0">
+                <thead style="background: #21262d;">
+                  <tr>
+                    <th>Port</th>
+                    <th>State</th>
+                    <th>Service</th>
+                    <th>Version</th>
+                    <th>CVEs</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for svc in host.services %}
+                  <tr>
+                    <td><code>{{ svc.port }}/{{ svc.protocol }}</code></td>
+                    <td>
+                      <span class="badge {% if 'open' in svc.state %}bg-success{% else %}bg-warning text-dark{% endif %}">
+                        {{ svc.state }}
+                      </span>
+                    </td>
+                    <td>{{ svc.service_name }}</td>
+                    <td>{{ svc.display_version or "—" }}</td>
+                    <td>
+                      {% if svc.cves %}
+                      <span class="text-danger">⚠ {{ svc.cves | length }}</span>
+                      {% else %}
+                      <span class="text-success">✓ Clean</span>
+                      {% endif %}
+                    </td>
+                  </tr>
+                  {% for cve in svc.cves %}
+                  <tr class="cve-row" style="background: #0d1117;">
+                    <td></td>
+                    <td colspan="2">
+                      <a href="{{ cve.url }}" target="_blank" rel="noopener">{{ cve.cve_id }}</a>
+                    </td>
+                    <td>
+                      <span class="badge badge-{{ cve.severity }}">
+                        {{ "%.1f"|format(cve.cvss_score) }} {{ cve.severity }}
+                      </span>
+                    </td>
+                    <td style="font-size:0.8rem; color: #8b949e;">
+                      {{ cve.description[:150] }}{% if cve.description|length > 150 %}…{% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <p class="text-muted p-3 mb-0">No open ports found.</p>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <footer class="text-center text-muted small pb-3">
+    Generated by <strong>CVEsweep v{{ version }}</strong> — {{ result.scan_start }}
+    | Command: <code>{{ result.command_line }}</code>
+  </footer>
+
+</div><!-- /container -->
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+        integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+        crossorigin="anonymous"></script>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/jquery.dataTables.min.js"></script>
+<script src="https://cdn.datatables.net/1.13.8/js/dataTables.bootstrap5.min.js"></script>
+<script>
+  $(document).ready(function() {
+    $('#allCvesTable').DataTable({
+      order: [[4, 'desc']],  // Sort by CVSS descending
+      pageLength: 25,
+      language: { search: "Filter CVEs:" }
+    });
+  });
+</script>
+</body>
+</html>
