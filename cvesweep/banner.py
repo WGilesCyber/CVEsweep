@@ -59,6 +59,10 @@ def grab_banner(
     try:
         with socket.create_connection((host, port), timeout=timeout) as sock:
             if port in _TLS_PORTS:
+                # Intentionally skip certificate verification for banner grabbing.
+                # Targets are arbitrary network hosts with unknown/self-signed certs.
+                # This context is used only here — NVD API calls use a separate
+                # requests.Session with default (verified) TLS.
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE

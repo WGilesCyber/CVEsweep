@@ -235,7 +235,7 @@
 <script>
   $(document).ready(function() {
     $('#allCvesTable').DataTable({
-      order: [[4, 'desc']],  // Sort by CVSS descending
+      order: [[0, 'asc'], [1, 'asc'], [4, 'desc']],  // Group by host/port, then CVSS descending
       pageLength: 25,
       language: { search: "Filter CVEs:" }
     });

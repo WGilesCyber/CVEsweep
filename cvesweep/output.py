@@ -1,6 +1,7 @@
 """Rich-powered terminal output and file format renderers (JSON, text, HTML)."""
 
 import dataclasses
+import html
 import json
 from typing import List, Optional
 
@@ -244,7 +245,7 @@ class TerminalRenderer:
             tbl.add_column("Severity", min_width=10)
             tbl.add_column("Published", min_width=10)
 
-            all_cves_sorted = sorted(result.all_cves, key=lambda x: x[3].cvss_score, reverse=True)
+            all_cves_sorted = sorted(result.all_cves, key=lambda x: (x[0], x[1], -x[3].cvss_score))
             for host_ip, port, svc_name, cve in all_cves_sorted:
                 style = SEVERITY_STYLE.get(cve.severity, "white")
                 tbl.add_row(
@@ -367,7 +368,7 @@ def render_html(result: ScanResult) -> str:
         result=result,
         version=__version__,
         severity_style=severity_style_map,
-        all_cves_sorted=sorted(result.all_cves, key=lambda x: x[3].cvss_score, reverse=True),
+        all_cves_sorted=sorted(result.all_cves, key=lambda x: (x[0], x[1], -x[3].cvss_score)),
     )
 
 
@@ -375,12 +376,12 @@ def _render_html_fallback(result: ScanResult) -> str:
     """Minimal HTML fallback when Jinja2 template is unavailable."""
     rows = []
     for host_ip, port, svc_name, cve in sorted(
-        result.all_cves, key=lambda x: x[3].cvss_score, reverse=True
+        result.all_cves, key=lambda x: (x[0], x[1], -x[3].cvss_score)
     ):
         rows.append(
-            f"<tr><td>{host_ip}</td><td>{port}</td><td>{svc_name}</td>"
-            f"<td>{cve.cve_id}</td><td>{cve.cvss_score:.1f}</td>"
-            f"<td>{cve.severity}</td><td>{cve.description[:120]}</td></tr>"
+            f"<tr><td>{html.escape(host_ip)}</td><td>{port}</td><td>{html.escape(svc_name)}</td>"
+            f"<td>{html.escape(cve.cve_id)}</td><td>{cve.cvss_score:.1f}</td>"
+            f"<td>{html.escape(cve.severity)}</td><td>{html.escape(cve.description[:120])}</td></tr>"
         )
     table_body = "\n".join(rows)
     return f"""<!DOCTYPE html>

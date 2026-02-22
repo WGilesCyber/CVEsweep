@@ -81,7 +81,6 @@ class NVDClient:
         )
         adapter = HTTPAdapter(max_retries=retry)
         session.mount("https://", adapter)
-        session.mount("http://", adapter)
 
         session.headers.update({
             "Accept": "application/json",
@@ -167,8 +166,9 @@ class NVDClient:
         """
         Look up CVEs using keyword search (fallback when no CPE available).
 
-        Keyword search is less precise — no version range filtering is applied
-        because NVD's keyword results don't map cleanly to CPE configuration nodes.
+        Keyword search is less precise — version range filtering is applied when a
+        version is detected, using NVD's configurations data (same as CPE lookup).
+        CVEs with no version range constraints are always included (conservative).
         """
         query = build_keyword_query(product, version)
         if not query:
@@ -184,7 +184,7 @@ class NVDClient:
         except requests.RequestException:
             return []
 
-        entries = self._parse_vulnerabilities(vulns, version, use_version_filter=False)
+        entries = self._parse_vulnerabilities(vulns, version, use_version_filter=True)
         entries.sort(key=lambda e: e.cvss_score, reverse=True)
 
         if self.cache:

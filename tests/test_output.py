@@ -5,7 +5,7 @@ import json
 import pytest
 
 from cvesweep.models import CVEEntry, HostResult, ScanResult, ServiceResult
-from cvesweep.output import render_json, render_text
+from cvesweep.output import _render_html_fallback, render_json, render_text
 from cvesweep.utils import cvss_to_severity
 
 
@@ -175,3 +175,72 @@ class TestModelProperties:
         result = _make_result()
         result.hosts[0].hostnames = []
         assert result.hosts[0].display_name == "192.168.1.10"
+
+
+# ---------------------------------------------------------------------------
+# HTML fallback renderer — XSS escaping
+# ---------------------------------------------------------------------------
+
+class TestRenderHtmlFallback:
+    """Verify that _render_html_fallback() HTML-escapes all external data."""
+
+    def _make_xss_result(self) -> ScanResult:
+        cve = CVEEntry(
+            cve_id='CVE-2023-<test>',
+            cvss_score=9.8,
+            severity="<CRITICAL>",
+            description='<script>alert("xss")</script>',
+            published="2023-07-20",
+            url="https://nvd.nist.gov/vuln/detail/CVE-2023-0001",
+        )
+        svc = ServiceResult(
+            port=22,
+            protocol="tcp",
+            state="open",
+            service_name="<ssh>",
+            product="OpenSSH",
+            version="7.4",
+            extrainfo="",
+            banner="",
+            cpes=[],
+            cves=[cve],
+        )
+        host = HostResult(
+            ip='192.168.1.<1>',
+            hostnames=[],
+            status="up",
+            os_match="",
+            services=[svc],
+        )
+        return ScanResult(
+            command_line="test",
+            scan_start="2026-01-01T00:00:00",
+            scan_end="2026-01-01T00:00:01",
+            elapsed=1.0,
+            hosts=[host],
+        )
+
+    def test_escapes_description(self):
+        output = _render_html_fallback(self._make_xss_result())
+        assert "<script>" not in output
+        assert "&lt;script&gt;" in output
+
+    def test_escapes_host_ip(self):
+        output = _render_html_fallback(self._make_xss_result())
+        assert "192.168.1.<1>" not in output
+        assert "192.168.1.&lt;1&gt;" in output
+
+    def test_escapes_severity(self):
+        output = _render_html_fallback(self._make_xss_result())
+        assert "<CRITICAL>" not in output
+        assert "&lt;CRITICAL&gt;" in output
+
+    def test_escapes_cve_id(self):
+        output = _render_html_fallback(self._make_xss_result())
+        assert "CVE-2023-<test>" not in output
+        assert "CVE-2023-&lt;test&gt;" in output
+
+    def test_escapes_service_name(self):
+        output = _render_html_fallback(self._make_xss_result())
+        assert "<ssh>" not in output
+        assert "&lt;ssh&gt;" in output

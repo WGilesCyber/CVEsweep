@@ -47,6 +47,29 @@ def _make_nvd_response(cve_id: str, score: float = 7.5, severity: str = "HIGH") 
     }
 
 
+def _make_nvd_response_with_range(
+    cve_id: str, score: float, version_end_excluding: str
+) -> dict:
+    """NVD response with a versionEndExcluding version range constraint."""
+    resp = _make_nvd_response(cve_id, score)
+    resp["vulnerabilities"][0]["cve"]["configurations"] = [
+        {
+            "nodes": [
+                {
+                    "cpeMatch": [
+                        {
+                            "vulnerable": True,
+                            "criteria": "cpe:2.3:a:openbsd:openssh:*:*:*:*:*:*:*:*",
+                            "versionEndExcluding": version_end_excluding,
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+    return resp
+
+
 @pytest.fixture
 def client(tmp_path):
     """NVDClient with no cache and no API key for unit testing."""
@@ -121,6 +144,33 @@ class TestLookupByKeyword:
     def test_empty_query_returns_empty(self, client):
         result = client.lookup_by_keyword("", "")
         assert result == []
+
+    @responses_lib.activate
+    def test_version_filter_excludes_out_of_range(self, client):
+        """Keyword lookup filters out CVEs whose version range excludes the detected version."""
+        # CVE affects versions < 7.0; detected version is 7.4 → should be filtered out
+        responses_lib.add(
+            responses_lib.GET,
+            NVD_BASE_URL,
+            json=_make_nvd_response_with_range("CVE-2020-12345", 9.8, "7.0"),
+            status=200,
+        )
+        result = client.lookup_by_keyword("OpenSSH", "7.4")
+        assert result == []
+
+    @responses_lib.activate
+    def test_version_filter_includes_in_range(self, client):
+        """Keyword lookup keeps CVEs whose version range includes the detected version."""
+        # CVE affects versions < 8.0; detected version is 7.4 → should be included
+        responses_lib.add(
+            responses_lib.GET,
+            NVD_BASE_URL,
+            json=_make_nvd_response_with_range("CVE-2020-99999", 7.5, "8.0"),
+            status=200,
+        )
+        result = client.lookup_by_keyword("OpenSSH", "7.4")
+        assert len(result) == 1
+        assert result[0].cve_id == "CVE-2020-99999"
 
 
 # ---------------------------------------------------------------------------
