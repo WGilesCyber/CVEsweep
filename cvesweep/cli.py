@@ -50,15 +50,48 @@ def build_parser():
         prog="cvesweep",
         description=(
             "CVEsweep — Network CVE Scanner\n"
-            "Scans for open ports, detects service versions, and maps them to known CVEs."
+            "Scans targets for open ports, identifies service versions with nmap,\n"
+            "queries the NIST NVD for known CVEs, and produces terminal, text, JSON,\n"
+            "and HTML reports."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
-            "Examples:\n"
-            "  cvesweep -sT -sV 192.168.1.0/24\n"
-            "  cvesweep -sT -p 22,80,443 10.0.0.1 -v\n"
-            "  sudo cvesweep -sS --top-ports 1000 10.0.0.0/24 -oJ results.json\n"
-            "  cvesweep -sT -sV -p- 10.0.0.5 --min-cvss 7.0 -oH report.html\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "QUICK START\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "  Scan a single host (TCP, version detection, show all CVEs):\n"
+            "    cvesweep -sT -sV 10.0.0.1\n\n"
+            "  Scan a subnet, report HIGH/CRITICAL CVEs, save HTML:\n"
+            "    cvesweep -sT -sV 10.0.0.0/24 --min-cvss 7.0 -oH report.html\n\n"
+            "  Fast stealth scan of top 1000 ports (requires root):\n"
+            "    sudo cvesweep -sS -T4 --top-ports 1000 10.0.0.0/24\n\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "COMMON WORKFLOWS\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "  Web server audit (common web ports, verbose CVE output):\n"
+            "    cvesweep -sT -sV -p 80,443,8080,8443 10.0.0.1 -vv\n\n"
+            "  Full port scan with all output formats:\n"
+            "    sudo cvesweep -A -p- 10.0.0.5 -oN out.txt -oJ out.json -oH out.html\n\n"
+            "  Bulk scan from a target file, save JSON:\n"
+            "    cvesweep -sT -sV -iL targets.txt -oJ results.json\n\n"
+            "  Port discovery only (no CVE lookup), fast:\n"
+            "    cvesweep -sT --no-cve --open -T4 10.0.0.0/24\n\n"
+            "  Use an NVD API key for faster CVE lookups on large scans:\n"
+            "    cvesweep -sT -sV 10.0.0.0/24 --cve-key YOUR_KEY --min-cvss 7.0\n\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "TIPS\n"
+            "────────────────────────────────────────────────────────────────────\n"
+            "  • -sV is required for accurate CVE matching — without it, service\n"
+            "    versions cannot be detected and CVE results will be imprecise.\n"
+            "  • Get a free NVD API key to raise the rate limit from 5 to\n"
+            "    50 requests/30s: https://nvd.nist.gov/developers/request-an-api-key\n"
+            "  • CVE results are cached for 24 h in ~/.cache/cvesweep/.\n"
+            "    Use --update-cache to refresh, or --no-cache to bypass entirely.\n"
+            "  • -sS, -sU, -O, and -A all require root (run with sudo).\n"
+            "  • Use -T4 on a reliable LAN; use -T1 or -T2 for stealthier scans.\n"
+            "  • CVSS thresholds: LOW 0.1–3.9 | MEDIUM 4.0–6.9 |\n"
+            "                     HIGH 7.0–8.9 | CRITICAL 9.0–10.0\n\n"
+            "Full documentation: USAGE.md\n"
         ),
     )
 
@@ -93,50 +126,57 @@ def build_parser():
         "-sS",
         action="store_true",
         default=False,
-        help="TCP SYN scan (stealth) — requires root",
+        help="TCP SYN (stealth) scan — sends SYN, reads response, never completes "
+             "the handshake; faster and less visible in application logs. Requires root.",
     )
     scan_grp.add_argument(
         "-sT",
         action="store_true",
         default=False,
-        help="TCP connect scan (no root required)",
+        help="TCP connect scan — completes the full three-way handshake. "
+             "No root required. Used when -sS is not available.",
     )
     scan_grp.add_argument(
         "-sV",
         action="store_true",
         default=False,
-        help="Service/version detection (enabled by default)",
+        help="Service/version detection — probes open ports to identify product "
+             "names and version numbers. Required for accurate CVE matching.",
     )
     scan_grp.add_argument(
         "-sU",
         action="store_true",
         default=False,
-        help="UDP scan — requires root",
+        help="UDP scan — discovers UDP services (DNS, SNMP, TFTP, etc.). "
+             "Slower than TCP scans. Requires root.",
     )
     scan_grp.add_argument(
         "-O",
         action="store_true",
         default=False,
-        help="OS detection — requires root",
+        help="OS detection — attempts to fingerprint the target's operating system. "
+             "Requires root.",
     )
     scan_grp.add_argument(
         "-A",
         action="store_true",
         default=False,
-        help="Aggressive: enables OS detection, version detection, and default scripts",
+        help="Aggressive mode — enables OS detection (-O), version detection (-sV), "
+             "default NSE script scanning, and traceroute in one flag. Requires root.",
     )
     scan_grp.add_argument(
         "-Pn",
         action="store_true",
         default=False,
-        help="Skip host discovery (treat all hosts as up)",
+        help="Skip host discovery — treats all hosts as online without sending a "
+             "ping/ICMP probe first. Useful when targets block ICMP.",
     )
     scan_grp.add_argument(
         "-6",
         action="store_true",
         default=False,
         dest="ipv6",
-        help="Enable IPv6 scanning",
+        help="Enable IPv6 scanning.",
     )
 
     # -----------------------------------------------------------------------
@@ -146,20 +186,21 @@ def build_parser():
     port_grp.add_argument(
         "-p",
         metavar="<ports>",
-        help="Port(s) to scan: 22 | 22,80,443 | 1-1024 | 1-65535 (use -p- for all)",
+        help="Port(s) to scan. Formats: single (22), list (22,80,443), "
+             "range (1-1024), all ports (1-65535 or -p-).",
     )
     port_grp.add_argument(
         "--top-ports",
         metavar="<n>",
         type=int,
         default=None,
-        help="Scan the N most common ports (default: nmap top 1000)",
+        help="Scan the N most commonly open ports ranked by nmap (e.g. --top-ports 100).",
     )
     port_grp.add_argument(
         "--open",
         action="store_true",
         default=False,
-        help="Only show open ports",
+        help="Only show open ports; suppress closed and filtered ports from output.",
     )
 
     # -----------------------------------------------------------------------
@@ -172,7 +213,9 @@ def build_parser():
         type=int,
         choices=range(6),
         default=None,
-        help="Timing template: 0=paranoid, 1=sneaky, 2=polite, 3=normal, 4=aggressive, 5=insane",
+        help="Timing template (0=paranoid, 1=sneaky, 2=polite, 3=normal, "
+             "4=aggressive, 5=insane). Higher values are faster but noisier. "
+             "Compact form -T4 is also accepted.",
     )
 
     # -----------------------------------------------------------------------
@@ -183,33 +226,36 @@ def build_parser():
         "--no-cve",
         action="store_true",
         default=False,
-        help="Skip CVE lookup (port scan only)",
+        help="Skip CVE lookup entirely and perform a port/service scan only.",
     )
     cve_grp.add_argument(
         "--cve-key",
         metavar="<apikey>",
         default=None,
-        help="NVD API key (higher rate limit: 50 req/30s vs 5 req/30s). "
-             "Get a free key at https://nvd.nist.gov/developers/request-an-api-key",
+        help="NVD API key — raises the rate limit from 5 to 50 requests/30s, "
+             "which significantly speeds up CVE lookups on large scans. "
+             "Free key: https://nvd.nist.gov/developers/request-an-api-key",
     )
     cve_grp.add_argument(
         "--min-cvss",
         metavar="<score>",
         type=float,
         default=0.0,
-        help="Minimum CVSS score to display (0.0–10.0, default: 0.0 = show all)",
+        help="Only display CVEs at or above this CVSS score (0.0–10.0, default: 0.0 = all). "
+             "Severity bands: LOW 0.1-3.9, MEDIUM 4.0-6.9, HIGH 7.0-8.9, CRITICAL 9.0-10.0.",
     )
     cve_grp.add_argument(
         "--no-cache",
         action="store_true",
         default=False,
-        help="Disable CVE result caching (always query NVD live)",
+        help="Disable the 24-hour CVE result cache and always query NVD live.",
     )
     cve_grp.add_argument(
         "--update-cache",
         action="store_true",
         default=False,
-        help="Force refresh: invalidate cache entries for this scan before querying NVD",
+        help="Invalidate cached CVE entries for services found in this scan, "
+             "then fetch fresh results from NVD.",
     )
 
     # -----------------------------------------------------------------------
@@ -220,7 +266,9 @@ def build_parser():
         "--scripts",
         metavar="<script-list>",
         default=None,
-        help="Run nmap scripts (e.g. banner,http-title,ssh-auth-methods)",
+        help="Comma-separated list of nmap NSE scripts to run against discovered services "
+             "(e.g. banner,http-title,ssh-auth-methods,ssl-cert). "
+             "See https://nmap.org/nsedoc/ for available scripts.",
     )
 
     # -----------------------------------------------------------------------
@@ -232,25 +280,27 @@ def build_parser():
         action="count",
         default=0,
         dest="verbose",
-        help="Verbose output (-v: show CVEs inline, -vv: full descriptions + URLs)",
+        help="Increase verbosity. -v shows CVE IDs and CVSS scores inline with "
+             "each service; -vv additionally shows full descriptions and NVD URLs.",
     )
     out_grp.add_argument(
         "-oN",
         metavar="<file>",
         dest="oN",
-        help="Save plain-text report to file",
+        help="Save a plain-text (nmap-style) report to the specified file.",
     )
     out_grp.add_argument(
         "-oJ",
         metavar="<file>",
         dest="oJ",
-        help="Save JSON report to file",
+        help="Save a JSON report to the specified file.",
     )
     out_grp.add_argument(
         "-oH",
         metavar="<file>",
         dest="oH",
-        help="Save HTML report to file",
+        help="Save a self-contained HTML report (Bootstrap 5, sortable CVE table) "
+             "to the specified file.",
     )
 
     return parser
